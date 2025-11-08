@@ -1,0 +1,103 @@
+#!/bin/bash
+
+
+cp /usr/include/asm/unistd_64.h ./orig_sysnr.h
+orig_file=./orig_sysnr.h
+dst_file=./gen_sysidt.h
+
+awk '/#define __NR/' $orig_file > .tmp_sysnr
+awk '{printf "[%d] = %d;//%s; \n", $3, $3, $2}' .tmp_sysnr > .tmp_array
+
+tmpNR=0;
+while read line 
+do
+    line=${line%%]*}
+    line=${line##*[}
+    until [ $tmpNR -eq $line ]
+    do
+        newNR=$(expr $tmpNR + 1)
+        if [ $tmpNR -ne  $line ];then
+            sed -i "${newNR}i [${tmpNR}]=-1;//NOT_IN_LAW " .tmp_array
+        fi
+        tmpNR=$newNR
+    done
+    tmpNR=$(expr $tmpNR + 1)
+done < .tmp_array
+
+rm $dst_file
+
+if [ -f $dst_file ]; then
+    echo "dst_flie already exist"
+    exit 0
+else
+    touch $dst_file
+fi
+
+cat <<EOF > $dst_file
+#include <asm/unistd_64.h>
+#define MAX_NR 470
+#define WR_BLOCK -1
+#define DEFAULT_SYSTYPE 0
+#define WR_COPY 1
+int system_subsititude[MAX_NR];
+int system_block[MAX_NR];
+EOF
+
+echo "int system_subsitiude[MAX_NR]={ " >>$dst_file
+    firstNR=$(wc -l $dst_file)
+    firstNR=${firstNR%% *};
+cat <<EOF >> $dst_file
+$(cat .tmp_array)
+};
+EOF
+    endNR=$(wc -l $dst_file)
+    endNR=${endNR%% *};
+
+
+while IFS=, read -r search_str replace_str; 
+do
+    if [[ -z "$search_str" ]];then
+        continue
+    fi
+    targetlines=$(sed -n "${firstNR},${endNR} p" $dst_file |grep -wn "__NR_${search_str}")
+    for line in "${targetlines[@]}"; do  
+        if [[ $line =~ "__NR_${search_str}" ]]; then
+            targetNR=${line%%:*}
+            targetNR=$(expr $targetNR + $firstNR - 1)
+            break;
+        fi
+    done
+    sed -i "${targetNR}c [__NR_${search_str}]=__NR_${replace_str};" $dst_file
+    
+done < sub.csv
+
+awk '{printf "[%d] = DEFAULT_TYPE;//%s; \n", $3, $2}' .tmp_sysnr > .tmp_array
+echo "int system_block[MAX_NR]={ " >>$dst_file
+    firstNR=$(wc -l $dst_file)
+    firstNR=${firstNR%% *};
+cat <<EOF >> $dst_file
+$(cat .tmp_array)
+};
+EOF
+    endNR=$(wc -l $dst_file)
+    endNR=${endNR%% *};
+
+while IFS=, read -r search_str systype; 
+do
+    if [[ -z "$search_str" ]];then
+        continue
+    fi
+    targetlines=$(sed -n "${firstNR},${endNR} p" $dst_file |grep -wn "__NR_${search_str}")
+    #targetlines=$(grep -wn "__NR_${search_str}" $dst_file)
+    for line in "${targetlines[@]}"; do  
+        if [[ $line =~ ${search_str} ]]; then
+            targetNR=${line%%:*}
+            targetNR=$(expr $targetNR + $firstNR - 1)
+            break;
+        fi
+    done
+    sed -i "${targetNR}c [__NR_${search_str}]=$systype;" $dst_file
+    
+done < block.csv
+        #sed -i "${firstNR},${endNR}s/*\/\/__NR_${search_str};/[__NR_$search_str]= $systype ;/" $dst_file
+    
